@@ -1,0 +1,750 @@
+/**********************************
+ * FEH SPR2015  ||  ENGR 1282.01H *
+ * TEAM B5      ||  RJF           *
+ *--------------------------------*
+ * Chance Lytle      Sean Umek    *
+ * Trevor Monteforte Charlie Casa *
+ *--------------------------------*
+ * Author: Chance Lytle           *
+ **********************************/
+
+/*
+ * Project: Blue Metal Hero
+ * Version: Competition Release 2
+ * Date:    4/3/2015
+ * Desc.:   Final Competition Code.  Do not edit.
+ *          Built from Beta 9
+ */
+
+#include <FEHLCD.h> // LCD Screen feedback
+#include <FEHIO.h> // Sensor declarations
+#include <FEHUtility.h> // Useful utilities such as Sleep()
+#include <FEHMotor.h> // Movement Functions
+#include <FEHServo.h> // Tool functions
+#include <FEHRPS.h> // Alignment functions
+#include <FEHBuzzer.h> // Does this even work?
+#include <FEHBattery.h> // Battery functions
+#include <BlueMetalHero_Header.h> // Constants Used Throughout the Programw
+
+/* Declarations for encoders, motors, and sensors */
+ButtonBoard buttons(FEHIO::Bank3); // Button Board for testing and selecting RPS
+// Motors & Encoders
+DigitalEncoder right_encoder(FEHIO::P0_5); // Right built-in Igwan encoder
+DigitalEncoder left_encoder(FEHIO::P0_7); // Left built-in Igwan encoder
+FEHEncoder rear_encoder(FEHIO::P2_7); // Rear analog encoder used for crank wheel with rear_motor
+FEHMotor right_motor(FEHMotor::Motor3); // Right Igwan motor, movement
+FEHMotor left_motor(FEHMotor::Motor0); // Left Igwan motor, movement
+FEHMotor rear_motor(FEHMotor::Motor2); // Crank switch hacked servo, acts like motor
+FEHServo front_servo(FEHServo::Servo0); // Button arm and oil switch arm servo control
+// Sensors
+AnalogInputPin LightCell(FEHIO::P2_4); // CdS cell, mounted on the bottom
+DigitalInputPin saltSwitch(FEHIO::P2_0); // Salt bag bump switch
+
+/******* Function Prototypes and Sources *******/
+/*
+ * All function uses, preconditions, and postconditions are paired with their function definitions.  Sources are here.
+ */
+
+// Movement
+void moveForward(int percent, int counts); // Heavily modified from Lab 2
+void turnRight(int percent, int counts); // Modified from Lab 2
+void turnLeft(int percent, int counts); // Modified from Lab 2
+
+int calcCounts(float inches); // Created from Equation X from Lab 2
+void chassisDrive(int percent, float inches); // Original
+
+void goTo(int destination); // Original
+
+// Alignment + Positioning
+void checkX(float x_coordinate); // Modified from Lab 2
+void checkY(float y_coordinate); // Modified from Lab 2
+void checkHeading(float heading); // Modified from Lab 2
+bool checkRPS(); // Original
+
+// Tools
+void executeTask(int task); // Original
+void grabSalt(); // Original
+void dropSalt(); // Original
+void turnCrank(); // Original
+void crankInstruction(int rotation); // Original, sub of turnCrank
+void pushButtons(); // Original
+void hitSingleButton(int angle_color); // Original, sub of pushButtons
+void hitOilSwitch(); // Original
+bool checkSalt(); // Original, sub of grabSalt and dropSalt()
+
+// Other
+void secretNoise(); // Original
+void startUp(); // Original
+void statusUpdate(char const string[]); // Original
+void motorUpdate(char const string[]); // Original
+
+/******************* Main function that will Run when Preoteus is ON *******************/
+
+int main() { // Main
+
+   LCD.Clear();
+   startUp(); // Start-Up Program, clears us for take off
+
+   // Final Testing Run Through
+   goTo(SALT);
+   statusUpdate("Went to SALT    ");
+   Sleep(STANDARD_SLEEP);
+   executeTask(GRAB_SALT);
+   Sleep(STANDARD_SLEEP);
+   goTo(HILL);
+   statusUpdate("Went up HILL    ");
+   Sleep(STANDARD_SLEEP);
+   goTo(GARAGE);
+   statusUpdate("Went to GARAGE  ");
+   Sleep(STANDARD_SLEEP);
+   executeTask(DROP_SALT);
+   goTo(BUTTONS);
+   statusUpdate("Went to BUTTONS ");
+   Sleep(STANDARD_SLEEP);
+   executeTask(PUSH_BUTTONS);
+   goTo(CRANK);
+   statusUpdate("Went to CRANK  ");
+   executeTask(TURN_CRANK);
+   goTo(OIL);
+   statusUpdate("Went to OIL    ");
+   executeTask(HIT_SWITCH);
+   secretNoise(); // Success
+   // End
+   return 0;
+} // Conclusion of main ******************************************************************
+
+/******* Misc. Functions *******/
+
+void secretNoise() // Easter Egg
+{
+   LCD.Clear();
+   LCD.WriteLine("WE DID IT!");
+   Buzzer.Tone(FEHBuzzer::E6, 5); // DA
+   Sleep(100);
+   Buzzer.Tone(FEHBuzzer::E6, 5); // DA
+   Sleep(500);
+   Buzzer.Tone(FEHBuzzer::E6, 5); // DAA
+   Sleep(500);
+   Buzzer.Tone(FEHBuzzer::C6, 5); // Duh
+   Sleep(100);
+   Buzzer.Tone(FEHBuzzer::E6, 5); // Duh
+   Sleep(500);
+   Buzzer.Tone(FEHBuzzer::G6, 5); // DUH
+   Sleep(650);
+   Buzzer.Tone(FEHBuzzer::G5, 5); // duh
+}
+
+void startUp() // Startup sequence of robot
+{
+
+    //Initialize RPS
+    RPS.InitializeMenu();
+
+    front_servo.SetMax(SERVO_MAX_THRESHOLD); // Down
+    front_servo.SetMin(SERVO_MIN_THRESHOLD); // Up
+    front_servo.SetDegree(FRONT_SERVO_VERTICAL); // Sets servo arm start position to straight up
+    Sleep(STANDARD_SLEEP); // Wait for arm to come up
+
+    rear_encoder.SetThresholds(REAR_ENCODER_LOW, REAR_ENCODER_HIGH); // Sets rear motor encoder to determined thresholds for white and black pinwheel spots, respectively.
+
+    if (Battery.Value() < BATTERY_THRESHOLD) // Checks battery value, gives alert if lower than 80%
+    {
+        LCD.WriteLine("Low battery");
+        LCD.Write("Battery: ");
+        LCD.Write(Battery.Value() / 3.3 * 100. );
+        LCD.WriteLine("%");
+        Sleep(2.0);
+   }
+
+    LCD.WriteLine("Activate the start light to begin"); // Waiting for starting light . .
+    int time = TimeNow(); // Course start time, global variable
+    while(LightCell.Value() > .65) // Waits for start light to turn on
+    {
+        if (TimeNow() - time >= 30) // If we don't start within 20 seconds . . .
+        {
+            LCD.Clear();
+            LCD.WriteLine("Failure to Start with Light"); // Then we end the program.
+        }
+    } // Start moving
+
+    /* Initial Write Conditions */
+    LCD.Clear();
+    LCD.WriteLine("***** Warden Botty *****");
+    LCD.WriteRC("   X:", FIRST, 0); // X coordinate
+    LCD.WriteRC("   Y:", SECOND, 0); // Y coordinate
+    LCD.WriteRC("   H:", THIRD, 0); // Heading
+    LCD.WriteRC("Note:", NOTE, 0); // Action / Etc.
+    LCD.WriteRC("LEnc: ", WRITE_ENCODER_LEFT, 0); // Left Encoder
+    LCD.WriteRC("REnc: ", WRITE_ENCODER_RIGHT, 0); // Right encoder
+
+    LCD.WriteRC("We're off! ", NOTE, WRITE); // Go
+    Sleep(STANDARD_SLEEP);
+
+}
+
+void statusUpdate(char const string[]) // Used as a shortcut to write robot's actions to the screen
+{
+    LCD.WriteRC(RPS.X(), FIRST, WRITE);
+    LCD.WriteRC(RPS.Y(), SECOND, WRITE);
+    LCD.WriteRC(RPS.Heading(), THIRD, WRITE);
+    LCD.WriteRC(string, NOTE, WRITE);
+}
+void motorUpdate(char const string[]) // Used to write motor actions and encoder counts to the screen
+{
+    LCD.WriteRC(RPS.X(), FIRST, WRITE);
+    LCD.WriteRC(RPS.Y(), SECOND, WRITE);
+    LCD.WriteRC(RPS.Heading(), THIRD, WRITE);
+    LCD.WriteRC(string, NOTE, WRITE);
+    LCD.WriteRC(left_encoder.Counts(), WRITE_ENCODER_LEFT, WRITE);
+    LCD.WriteRC(right_encoder.Counts(), WRITE_ENCODER_RIGHT, WRITE);
+}
+
+/******* Movement Functions *******/
+/*
+ * Primary motion for the robot
+ */
+
+/* Pre Made from Lab 02 */
+
+void moveForward(int percent, int counts) // Using encoders, move the robot
+{
+   //Reset encoder counts
+   right_encoder.ResetCounts();
+   left_encoder.ResetCounts();
+   //Set both motors to desired percent
+   right_motor.SetPercent(percent); // Previously +1 to compensate for motor imbalance
+   left_motor.SetPercent(percent);
+
+   // While the average of the left and right encoder are less than counts,
+   // keep running motors
+   int time = TimeNow(); // Timeout
+   while(((left_encoder.Counts() + right_encoder.Counts()) / 2. < counts) && TimeNow() - time < ADJUSTMENT_TIME);
+
+   if (TimeNow() - time > ADJUSTMENT_TIME)
+   {
+       statusUpdate("Warning: Timeout");
+   }
+
+   motorUpdate("Moved CHASSIS "); // Provides feedback from encoders
+
+   if (TimeNow() - time > ADJUSTMENT_TIME) // Tells us if we messed up
+   {
+       statusUpdate("Warning: Timeout ");
+   }
+
+   //Turn off motors
+   right_motor.Stop();
+   left_motor.Stop();
+}
+void turnRight(int percent, int counts) // using encoders, turn right
+{
+   // Reset encoder counts
+   right_encoder.ResetCounts();
+   left_encoder.ResetCounts();
+   // Set both motors to desired percent, opposite of each other
+   right_motor.SetPercent(-percent);
+   left_motor.SetPercent(percent);
+   // While the average of the left and right encoder are less than counts,
+   // keep running motors
+   int time = TimeNow();
+   while(((left_encoder.Counts() + right_encoder.Counts()) / 2. < counts) && TimeNow() - time < ADJUSTMENT_TIME);
+
+   motorUpdate("Turned RIGHT  ");
+
+   right_motor.Stop();
+   left_motor.Stop();
+}
+void turnLeft(int percent, int counts) // using encoders, turn left
+{
+   // Reset encoder counts
+   right_encoder.ResetCounts();
+   left_encoder.ResetCounts();
+   // Set both motors to desired percent, opposite of each other
+   right_motor.SetPercent(percent);
+   left_motor.SetPercent(-percent);
+   // While the average of the left and right encoder are less than counts,
+   // keep running motors
+   int time = TimeNow();
+   while(((left_encoder.Counts() + right_encoder.Counts()) / 2. < counts) && TimeNow() - time < ADJUSTMENT_TIME);
+
+   motorUpdate("Turned LEFT  ");
+
+   right_motor.Stop();
+   left_motor.Stop();
+}
+
+/* Original */
+
+int calcCounts(float inches) // Returns counts for motor purposes when given inches
+{
+    return (inches * COUNTS_PER_REV) / (2. * PI * (WHEEL / 2.)); // Equation from Lab 2
+}
+void chassisDrive(int percent, float inches) { // Primary movement function, lower power at end to reduce inertia
+    moveForward(percent, calcCounts(inches)); // Drive robot the given distance
+}
+
+void goTo(int destination) // Used to go to a landmark
+{
+    switch (destination)
+    {
+     case (SALT):
+        statusUpdate("Go to SALT ");
+        chassisDrive(STANDARD_PERCENT, 14); // Go south
+        statusUpdate("Drove SOUTH  ");
+        Sleep(STANDARD_SLEEP);
+        checkHeading(SOUTH); // Make sure if we're south
+        turnLeft(TURN_PERCENT, TURN_COUNT); // Turn towards the east wall
+        checkHeading(EAST); // Check if we're facing the wall
+        Sleep(STANDARD_SLEEP);
+        chassisDrive(STANDARD_PERCENT, 12); // Drive to wall
+        statusUpdate("Drove EAST ");
+        Sleep(STANDARD_SLEEP);
+        checkX(30.5); // Minor adjustment off of wall // 30
+        Sleep(STANDARD_SLEEP);
+        checkHeading(EAST); // Are we still facing the wall?
+        turnRight(TURN_PERCENT, TURN_COUNT); // Turn to face bag
+        checkHeading(SOUTH); // Check if we're facing the bag
+        chassisDrive(STANDARD_PERCENT, 1.5); // Drive to bag
+        statusUpdate("Drove SOUTH  ");
+        break;
+    case (HILL):
+        turnRight(TURN_PERCENT, 2 * TURN_COUNT); // About face, turn towards hill with bag in hand
+        checkHeading(NORTH);
+        chassisDrive(STANDARD_PERCENT, 8);
+        statusUpdate("Drove NORTH  ");
+        while ((RPS.Y() < Y_HALF + 1) && checkRPS()) // If we're not up the hill...
+        {
+            statusUpdate("Not up HILL ");
+            checkHeading(NORTH); // Try,
+            right_motor.SetPercent(MAX_PERCENT);
+            left_motor.SetPercent(MAX_PERCENT);
+            Sleep(STANDARD_SLEEP * 10);
+        }
+        right_motor.Stop(); // Woah
+        left_motor.Stop(); //  Nelly
+        statusUpdate("Up the HILL ");
+        Sleep(STANDARD_SLEEP);
+        checkY(50.4); // Assure we're up the ramp and near the road // 51.2
+        checkHeading(NORTH); // Make sure we're north, front to crank
+        turnLeft(TURN_PERCENT, TURN_COUNT); // Turn so front faces west
+        Sleep(STANDARD_SLEEP);
+        checkHeading(WEST);
+        break;
+    case(GARAGE):
+        chassisDrive(STANDARD_PERCENT, 20); // Drive to westmost corner of road
+        statusUpdate("Drove WEST  ");
+        checkX(12.8);
+        checkHeading(WEST); // Check we are facing west
+        turnRight(TURN_PERCENT, .5 * TURN_COUNT); // Face garage
+        checkHeading(NORTHWEST); // Check we are facing northwest
+        chassisDrive(STANDARD_PERCENT, 4.247);
+        statusUpdate("Drove NORTHWEST ");
+        checkX(10.8);
+        checkY(53.1);
+        break;
+    case(BUTTONS):
+        checkX(10.8);
+        checkY(53.1);
+        checkHeading(NORTHWEST); // Check we are facing northwest
+        turnRight(TURN_PERCENT, TURN_COUNT);
+        checkHeading(NORTHEAST); // Check we are facing northeast
+        chassisDrive(STANDARD_PERCENT, 10); // Drive to buttons, laterally
+        statusUpdate("Drove NORTHEAST ");
+        checkX(18.8);
+        checkY(61);
+        turnLeft(TURN_PERCENT, TURN_COUNT); // Turn left, facing buttons
+        checkX(18.4);
+        checkY(60.2);
+        break;
+    case(CRANK):
+        turnRight(TURN_PERCENT, .5 * TURN_COUNT); // Face north
+        chassisDrive(-STANDARD_PERCENT, 8); // Back up to road
+        checkY(51); // Align to the east road turn
+        turnLeft(TURN_PERCENT, TURN_COUNT); // Face WEST
+        checkHeading(WEST); // Make sure we're west
+        statusUpdate("Checking WEST ");
+        chassisDrive(-STANDARD_PERCENT, 13.2); // drive with butt towards EAST
+        checkX(30.1); // Align horizontally with crank wheel
+        turnLeft(TURN_PERCENT, TURN_COUNT); // Turn so butt faces crank
+        checkHeading(SOUTH); // Make sure butt faces crank
+        Sleep(STANDARD_SLEEP);
+        chassisDrive(-STANDARD_PERCENT, 9); // Drive to crank
+        statusUpdate("Drove \"NORTH\"  "); // Drive with butt towards crank towards crank
+        checkHeading(SOUTH); // Check we are facing south
+        right_motor.SetPercent(PULSE_PERCENT); // Pulse motors so the crank arm isn't touching the back wall
+        left_motor.SetPercent(PULSE_PERCENT); //  to avoid friction
+        Sleep(125); // Pulse time
+        right_motor.Stop(); // Woah
+        left_motor.Stop(); //  Nelly
+        break;
+    case(OIL):
+        chassisDrive(STANDARD_PERCENT, 20); // Move away from crank and down the hill
+        statusUpdate("Drove SOUTH  ");
+        while ((RPS.Y() > Y_HALF) && checkRPS()) // While we're still up the still
+        {
+            statusUpdate("We're still up the hill");
+            checkHeading(SOUTH);
+            chassisDrive(STANDARD_PERCENT * .75, 15); // Try again
+        }
+        checkY(15.7); // Make sure we're properly down the hill
+        checkHeading(SOUTH); // Check we are facing south
+        turnRight(TURN_PERCENT, .5 * TURN_COUNT); // Turn in vague direction of oil switch
+        checkHeading(SOUTHWEST); // Make sure we're facing South West
+        chassisDrive(STANDARD_PERCENT, 9); // Drive to oil switch latitude
+        statusUpdate("Drove SOUTHWEST");
+        checkHeading(SOUTHWEST); // Check we are facing southwest
+        checkX(21.3); // Align horizontally
+        checkY(8.3); //  with Oil Switch
+        checkHeading(SOUTHWEST); // Check we are facing southwest
+        turnRight(TURN_PERCENT, .5 * TURN_COUNT);
+        checkHeading(WEST); // Make sure we're facing west
+        chassisDrive(STANDARD_PERCENT, 2); // Approach Oil Switch
+        statusUpdate("Drove WEST  ");
+        checkX(15.3); // Align to oil pump
+        checkHeading(WEST); // Check we are facing west
+        Sleep(STANDARD_SLEEP);
+        break;
+    default: // Fail ungracefully, must survive
+        statusUpdate("Who are we, Marvin Gaye?"); // Bad error
+    }
+}
+
+/******* Alignment Functions *******/
+/*
+ * Generally focused on Robot Positioning System and physical landmark checks (e.g. walls)
+ * Supplements Movement and tools; bridges their gap.  Figuratively and literaly in the code.
+ */
+
+/* Pre made from Lab 2 */
+
+void checkX(float x_coordinate) //use RPS to check x location
+{
+   // Determine motor pulse directions depending on heading
+   int direction1 = 1, direction2 = 1;
+   if (RPS.Heading() > 90 && RPS.Heading() < 270) // If we're facing -x then we will go forward after over-shooting
+   {
+       direction2 = -1;
+   }
+   else // If we're facing +x, then we will reverse after over-shooting
+   {
+       direction1 = -1;
+   }
+   //check whether the robot is within an acceptable range and hasn't spent too long looking
+   int time = TimeNow(); // Time-out variable
+   if (!checkRPS()) // If RPS is not OK, don't run this.
+   {
+       time = -ADJUSTMENT_TIME; // Kill the loop condition
+   }
+   while((RPS.X() < x_coordinate - 1 || RPS.X() > x_coordinate + 1) && TimeNow() - time < ADJUSTMENT_TIME)
+   {
+       right_encoder.ResetCounts(); // Reset encoder
+       left_encoder.ResetCounts(); //  counts for reporting
+       if(RPS.X() > x_coordinate)
+       {
+           // Pulse the motors for a short duration in the correct direction
+           chassisDrive(direction1 * PULSE_PERCENT, ADJUSTMENT);
+           Sleep(PULSE_TIME);
+       }
+       else if(RPS.X() < x_coordinate)
+       {
+           // Pulse the motors for a short duration in the correct direction
+           chassisDrive(direction2 * PULSE_PERCENT, ADJUSTMENT);
+           Sleep(PULSE_TIME);
+       }
+       motorUpdate("Checking X"); // Report values
+   }
+}
+
+void checkY(float y_coordinate) //use RPS to check y location
+{
+   // Determine motor pulse directions depending on heading
+   int direction1 = 1, direction2 = 1;
+   if (RPS.Heading() > 180 && RPS.Heading() < 359) // If we're facing -y then we will go forward after over-shooting
+   {
+       direction2 = -1;
+   }
+   else // If we're facing +y then we will reverse after over-shooting
+   {
+       direction1 = -1;
+   }
+   // check whether the robot is within an acceptable range and hasn't spent too long looking
+   int time = TimeNow();
+   if (!checkRPS()) // If RPS is not OK, don't run this.
+   {
+       time = -ADJUSTMENT_TIME; // Kill the loop condition
+   }
+   while((RPS.Y() < y_coordinate - 1 || RPS.Y() > y_coordinate + 1) && TimeNow() - time < ADJUSTMENT_TIME)
+   {
+       right_encoder.ResetCounts(); // Reset encoder
+       left_encoder.ResetCounts(); //  counts for reporting
+       if(RPS.Y() > y_coordinate)
+       {
+           // Pulse the motors for a short duration in the correct direction
+           chassisDrive(direction1 * PULSE_PERCENT, ADJUSTMENT);
+           Sleep(PULSE_TIME);
+       }
+       else if(RPS.Y() < y_coordinate)
+       {
+           // Pulse the motors for a short duration in the correct direction
+           chassisDrive(direction2 * PULSE_PERCENT, ADJUSTMENT);
+           Sleep(PULSE_TIME);
+       }
+       motorUpdate("Checking Y"); // Report values
+   }
+}
+
+void checkHeading(float heading) //using RPS to check robot's front facing direction // Uses recursion
+{
+   /* The use of additional conditions involving 315 (Southeast) are used
+    * to compensate for the use of polar coordinates when calculating the heading
+    * with the RPS system.
+    */
+    right_encoder.ResetCounts();
+    left_encoder.ResetCounts();
+    statusUpdate("Checking heading");
+    // check whether the robot is within an acceptable range and hasn't spent too long looking
+    int time = TimeNow();
+    if (!checkRPS()) // If RPS is not OK, don't run this.
+    {
+        time = -ADJUSTMENT_TIME; // Kill the loop condition
+    }
+    while( (RPS.Heading() < heading - 1.8 || RPS.Heading() > heading + 1.8) && TimeNow() - time < ADJUSTMENT_TIME)
+   {
+       if((RPS.Heading() > heading && heading != 0) || (RPS.Heading() < SOUTHEAST && heading == 0))
+       {
+           statusUpdate("Checking to RIGHT");
+           turnRight(PULSE_PERCENT + 2, ADJUSTMENT_TURN); // Click to the right
+           Sleep(PULSE_TIME);
+       }
+       else if((RPS.Heading() < heading && heading != 0) || (RPS.Heading() > SOUTHEAST && heading == 0))
+       {
+           statusUpdate("Checking to LEFT");
+           turnLeft(PULSE_PERCENT + 2, ADJUSTMENT_TURN); // Click to the left
+           Sleep(PULSE_TIME);
+       }
+       motorUpdate("Checking heading");
+
+   }
+    if (left_encoder.Counts() == 0 && right_encoder.Counts() == 0) // If we went nowhere . . .
+    {
+        statusUpdate("Trying again");
+        chassisDrive(-PULSE_PERCENT, 6 * ADJUSTMENT); // back up a little
+        checkHeading(heading); // and try again
+        chassisDrive(PULSE_PERCENT, 5 * ADJUSTMENT); // then put us back, close enough
+    }
+}
+
+bool checkRPS() // Used to check the RPS status; if its not properly sending data or we're not recieving, report false
+{
+    bool status = true;
+    if (RPS.X() < 0 || RPS.Y() < 0 || RPS.Heading() < 0)
+    {
+        statusUpdate("RPS Failure ");
+        status = false;
+    }
+    return status;
+}
+
+/******* Tool Functions ******/
+/*
+ * Used for every tool based action: Salt bag, crank wheel,
+ * buttons, and oil switch.  All functions assume alignment
+ * with the given object of tooling.
+ */
+
+void executeTask(int task) // Catch-all execute, contains references for others
+{
+    switch (task)
+    {
+    case(GRAB_SALT):
+        statusUpdate("Grabbing SALT ");
+        grabSalt(); // Picks up salt bag
+        statusUpdate("Grabbed SALT");
+        break;
+    case(TURN_CRANK):
+        statusUpdate("Turning CRANK ");
+        turnCrank(); // Turns crank proper direction
+        statusUpdate("Turned CRANK");
+        break;
+    case(DROP_SALT):
+        statusUpdate("Depositing SALT ");
+        dropSalt(); // Deposits salt in garage
+        statusUpdate("Deposited SALT");
+        break;
+    case(PUSH_BUTTONS):
+        statusUpdate("Pushing BUTTONS ");
+        pushButtons(); // Pushes buttons
+        front_servo.SetDegree(FRONT_SERVO_VERTICAL); // Picks the arm back up just in case
+        statusUpdate("Pushed BUTTONS");
+        break;
+    case(HIT_SWITCH):
+        statusUpdate("Pushing SWITCH ");
+        hitOilSwitch(); // Hit the oil switch in the desired direction
+        statusUpdate("Pushed SWITCH ");
+        break;
+    }
+}
+
+void grabSalt() // Used to pick the salt bag up in the bucket // Assume robot is directly in between salt bag and smooth hill
+{
+    do // Pick up the bag; try at least once regardless of mounted saltSwitch
+    {
+    front_servo.SetDegree(FRONT_SERVO_DOWN); // Drop the arm
+    Sleep(STANDARD_SLEEP * 3); // Wait for the arm to come down
+    checkHeading(SOUTH + 1);
+    chassisDrive(-STANDARD_PERCENT, 1); // Back up a lot
+    checkHeading(SOUTH + 2);
+    chassisDrive(STANDARD_PERCENT *.75, 6.8); // Approach the bag
+    Sleep(STANDARD_SLEEP);
+    chassisDrive(-PULSE_PERCENT, .2); // Back up a little
+    // Bag should be picked up now
+    front_servo.SetDegree(FRONT_SERVO_HOLD); // Raise the bag
+    Sleep(STANDARD_SLEEP * 3); // Wait for arm to come up
+    checkHeading(SOUTH);
+    chassisDrive(-STANDARD_PERCENT, 1); // Back up a lot
+    } while (!checkSalt()); // Try again if we don't have it
+}
+void dropSalt() // Used to drop the salt bag and hopefully shove it into the garage // Assume aligned with garage, NORTHWEST
+{
+    if (checkSalt()) // If we do in fact have the bag, procede.
+    {
+    front_servo.SetDegree(FRONT_SERVO_DOWN); // Lower arm and salt bag
+    Sleep(STANDARD_SLEEP * 3); // Wait for arm to come down
+    chassisDrive(PULSE_PERCENT, 2); // Ease into garage
+    statusUpdate("Let it go!   ");
+    for (int  i = 0; i < 5; i++) // Flail until its off
+    {
+        front_servo.SetDegree(FRONT_SERVO_HOLD); // Up
+        Sleep(STANDARD_SLEEP);
+        front_servo.SetDegree(FRONT_SERVO_DOWN); // Down
+        Sleep(STANDARD_SLEEP);
+    }
+    statusUpdate("We let it go ");
+    chassisDrive(-STANDARD_PERCENT, 3.2); // Exit garage // 3
+    checkHeading(NORTHWEST); // Realign to make getting to buttons easier
+    front_servo.SetDegree(FRONT_SERVO_VERTICAL);
+    Sleep(STANDARD_SLEEP * 3); // Wait for the arm to come up
+    }
+}
+bool checkSalt() // Used to make sure we have the salt bag
+{
+    bool status = false;
+    if (saltSwitch.Value()) // If the bag is not obtained
+    {
+        statusUpdate("No salt bag ");
+        status = true;
+    }
+    return status;
+}
+
+void turnCrank() // Used to turn the crank the desired direction.  // Assume aligned with crank, butt facing north
+{
+    if (LightCell.Value() < .65) // If the cell is in the red range of values, turn crank cw
+    {
+        statusUpdate("RED - Turning CW");
+        crankInstruction(CW);
+    }
+    else // If the cell is in the blue range of values or we have no idea, turn crank ccw
+    {
+        statusUpdate("BLUE - Turning CCW");
+        crankInstruction(CCW);
+    }
+}
+void crankInstruction(int rotation) // Used to turn the crank a set amount of distance
+{
+    rear_encoder.ResetCounts(); // Reset encoder
+    int time = TimeNow(); // Timeout
+    while((rear_encoder.Counts() < 20) && TimeNow() - time < ADJUSTMENT_TIME) // While the motor hasn't gone through 360* of rotation
+    {
+        rear_motor.SetPercent(rotation * CRANK_PERCENT);
+    }
+    rear_motor.Stop(); // Woah nelly
+}
+
+void pushButtons() // Used to push all buttons after ensuring alignment
+{
+    chassisDrive(-STANDARD_PERCENT, .75); // Ensure we don't hit the buttons on the initial swing down.
+    Sleep(STANDARD_SLEEP); // Wait so the crank arm has ample time.
+    int time; // Timeout
+    for (int  i = 1; i <= 3; i++) // Loops through first, second, and third buttons in order
+    {
+        time = TimeNow();
+        if (RPS.RedButtonOrder() == i) // If red is first/second/third . . .
+        {
+            while (!RPS.RedButtonPressed() && TimeNow() - time < 10)
+            {
+                checkHeading(NORTHWEST);
+                statusUpdate("Pushing red");
+                hitSingleButton(RED_ANGLE);
+                Sleep(STANDARD_SLEEP * 3); // Give button time to update
+            }
+        }
+        else if (RPS.BlueButtonOrder() == i) // If blue is first/second/third . . .
+        {
+            while (!RPS.BlueButtonPressed() && TimeNow() - time < 10)
+            {
+                checkHeading(NORTHWEST);
+                statusUpdate("Pushing blue");
+                hitSingleButton(BLUE_ANGLE);
+                Sleep(STANDARD_SLEEP * 3); // Give button time to update
+            }
+        }
+        else if (RPS.WhiteButtonOrder() == i) // If white is first/second/third . . .
+        {
+            while (!RPS.WhiteButtonPressed() && TimeNow() - time < 10)
+            {
+                checkHeading(NORTHWEST);
+                statusUpdate("Pushing white");
+                hitSingleButton(WHITE_ANGLE);
+                Sleep(STANDARD_SLEEP * 3); // Give button time to update
+            }
+        }
+        else
+        {
+            statusUpdate("Error: RPS Buttons");
+            Sleep(1.0);
+        }
+        chassisDrive(-PULSE_PERCENT, 4 * ADJUSTMENT); // Back up a tad more just in case
+    }
+    chassisDrive(-STANDARD_PERCENT, 2* ADJUSTMENT); // Back up a bit
+    Sleep(STANDARD_SLEEP);
+    front_servo.SetDegree(FRONT_SERVO_VERTICAL); // Resets the buttom arm to a vertical, safe, aerodynamic position
+}
+void hitSingleButton(int angle_color) // Used to hit a button
+{
+
+    front_servo.SetDegree(angle_color); // Push button
+    Sleep(STANDARD_SLEEP * 3);
+    checkHeading(NORTHWEST);
+    statusUpdate("Ramming");
+    chassisDrive(STANDARD_PERCENT, 1.5); // Ram it
+    chassisDrive(-STANDARD_PERCENT, 1.3); // Pull back
+    statusUpdate("Retreating");
+    checkHeading(NORTHWEST); // Make sure we're still facing the buttons
+}
+
+void hitOilSwitch() // Used to hit the oil switch
+{
+    int time = TimeNow(); // Time-out
+    while (!RPS.OilPress() && TimeNow() - time < ADJUSTMENT_TIME) // While the switch isn't flicked
+    {
+        if (RPS.OilDirec() > 0) // If it must go north . .
+        {
+            statusUpdate("SWITCH to RIGHT");
+            turnLeft(TURN_PERCENT, .5 * TURN_COUNT); // Swivel to left
+            Sleep(STANDARD_SLEEP);
+            front_servo.SetDegree(FRONT_SERVO_HOLD - 30); // Put arm at switch level
+            Sleep(STANDARD_SLEEP * 3);
+            turnRight(2 * TURN_PERCENT, TURN_COUNT); // Swing arm into switch
+        }
+        else // If it must go south . . .
+        {
+            statusUpdate("SWITCH to LEFT");
+            turnRight(TURN_PERCENT, .5 * TURN_COUNT); // Swivel to right
+            Sleep(STANDARD_SLEEP);
+            front_servo.SetDegree(FRONT_SERVO_HOLD - 30); // Put arm at switch level
+            Sleep(STANDARD_SLEEP * 3);
+            turnLeft(2 * TURN_PERCENT, TURN_COUNT); // Swing arm into switch
+        }
+    }
+}
