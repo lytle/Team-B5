@@ -1,0 +1,75 @@
+#ifndef BLUEMETALHERO_HEADER_H
+#define BLUEMETALHERO_HEADER_H
+
+/* Constants */
+// Useful Constants
+#define PI 3.1415926 // Pi, used in wheel diameter
+#define TOTALTIME 120 // Can only complete the course in 120 seconds
+// Alignment//Positioning/Movement Constants
+#define WHEEL 3.5 // Wheel diamater for calculating distance variables
+#define COUNTS_PER_REV 318 // Counts per revolution of the Igwan motor
+#define ADJUSTMENT_TIME 4 // The time allotted for check x/y and check heading functions // 5
+#define PULSE_TIME 45 //Alignment, time between pulses in heading checkings
+#define ADJUSTMENT_TURN 4 // Turn Alignment, powers motors (counts)
+#define ADJUSTMENT .1 // Lateral alignment, powers motors (inches)
+#define PULSE_PERCENT 12 // Alignment, vertical/horizontal positioning // 14
+#define X_HALF 18.25 // Half of the course's domain in x coords
+#define Y_HALF 39.8 // Half of the course's range in y coords
+// Front Servo Arm Values
+#define SERVO_MAX_THRESHOLD 2500 // Max value for the servo
+#define SERVO_MIN_THRESHOLD 765 // Min value for the servo
+#define WHITE_ANGLE 115 // Angle for vertical servo used to hit white button
+#define RED_ANGLE 89 // Angle for vertical servo to hit the red button
+#define BLUE_ANGLE 129 // Angle for vertical servo to hit the blue button
+#define FRONT_SERVO_VERTICAL 6 // Front arm vertical
+#define FRONT_SERVO_DOWN 170 // Salt bag pick up
+#define FRONT_SERVO_HOLD 115 // Hold the bag
+// States used in Movement and Task Completion
+enum DestinationStates // List of landmarks for goTo
+{
+    SALT,
+    HILL,
+    GARAGE,
+    BUTTONS,
+    CRANK,
+    OIL
+};
+enum TaskStates // List of tasks for executeTask
+{
+    GRAB_SALT, // First
+    TURN_CRANK, // Second
+    DROP_SALT, // Third or fourth
+    PUSH_BUTTONS, // Third or fourth
+    HIT_SWITCH // Fifth
+};
+
+// Ease of Use constants
+#define STANDARD_SLEEP 200 // Standard sleep constant to wait after most motor movements
+#define TURN_COUNT 167 // Turn constant used to turn at 90 degree easily without calculating every time.
+#define TURN_PERCENT 28  // Turn percent, used with TURN_COUNT // 29 // 34
+#define STANDARD_PERCENT 22 // The most used percent value for basic turning and movement. // 24
+#define MAX_PERCENT 48 // The highest percent value,  used in incline movement and sharp adjustments // 45
+#define CRANK_PERCENT 100 // Max motor power for rear motor used to turn crank
+#define REAR_ENCODER_LOW .21 // Rear encoder min threshold
+#define REAR_ENCODER_HIGH 2.65 // Rear encoder max threshold
+#define EAST 0 // RPS Positioning
+#define NORTHEAST 45 // RPS Positioning
+#define NORTH 90 // RPS positioning
+#define NORTHWEST 135 // RPS Positioning
+#define WEST 180 // RPS Positioning
+#define SOUTHWEST 225 // RPS Positioning
+#define SOUTH 270 // RPS Positioning
+#define SOUTHEAST 315 // RPS Positioning
+#define CW 1 // Crank wheel turning, clockwise
+#define CCW -1 // Crank wheel turning, counter-clockwise
+#define BATTERY_THRESHOLD 3. // 80% of battery value.  If the battery goes lower, it will warn us.
+// LCD.WriteRC() constants used to write to the correct row and column
+#define FIRST 1 // First row, X coord
+#define SECOND 2 // Second row, Y coord
+#define THIRD 3 // Third row, Heading
+#define NOTE 4 // Fourth row, note feedback
+#define WRITE_ENCODER_LEFT 5 // 5th row, left encoder counts
+#define WRITE_ENCODER_RIGHT 6 // 6th row, right encoder counts
+#define WRITE 7 // 7th column, used to write places
+
+#endif // BLUEMETALHERO_HEADER_H
